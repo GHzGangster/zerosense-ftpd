@@ -1,0 +1,22 @@
+{
+	"env": {
+		"node": true,
+		"commonjs": true,
+		"es6": true,
+		"browser": true,
+		"jquery": true
+	},
+	"extends": "eslint:recommended",
+	"parserOptions": {
+		"ecmaVersion": 6,
+		"sourceType": "module",
+		"ecmaFeatures": {
+			"jsx": true
+		}
+	},
+	"rules": {
+		"no-unused-vars": 0,
+		"no-param-reassign": 0,
+		"no-console": 0
+	}
+}

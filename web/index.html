@@ -1,0 +1,55 @@
+<!doctype html>
+<html>
+	<head>
+		<title>zerosense-ftp</title>
+		
+		<link rel="stylesheet" href="http://necolas.github.io/normalize.css/8.0.0/normalize.css">
+		<link rel="stylesheet" href="app.css">
+	</head>
+	<body>
+		<div class="header">
+			<h1>zerosense-ftp</h1>
+		</div>
+	
+		<div class="actions">
+			<button id="buttonFolderTest">Start</button>
+			<button id="buttonFolderTest2">Stop</button>
+		</div>
+	
+		<div class="fm-path-container">
+			<input id="fm-path" class="fm-path" type="text"></input>
+			<button id="fm-path-go" class="fm-path-go">Go</button>
+		</div>
+	
+		<div class="fm-entries-container">
+			<table class="fm-entries-table">
+				<thead>
+					<tr>
+						<th style="width: 50px"><div style="height:0;overflow:hidden">&nbsp;</div></th>
+						<th><div style="height:0;overflow:hidden">&nbsp;</div></th>
+					</tr>
+				</thead>
+				<tbody id="fm-entries">
+					<!--<tr>
+						<td class="fm-entry-options-container">
+							<div class="fm-entry-options-button">
+								<a href=#">&times;</a>
+							</div>
+							<div class="fm-entry-options-menu">
+								<a href="#">Copy</a><br>
+								<a href="#">Delete</a>
+							</div>
+						</td>
+						<td>filename</td>
+					</tr>-->
+				</tbody>
+			</table>
+		</div>
+	
+		<div id="log">Loading...</div>
+		
+		<script src="deps.js"></script>
+		<script src="http://code.jquery.com/jquery-1.12.4.min.js"></script>
+		<script src="bundle.js"></script>
+	</body>
+</html>

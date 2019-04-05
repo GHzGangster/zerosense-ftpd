@@ -1,0 +1,17 @@
+{
+	"presets": [
+		[
+			"env", {
+				"loose": true,
+				"targets": {
+					"browsers": ["last 2 versions", "ie >= 8"]
+				}
+			}
+		]
+	],
+	plugins: [
+		"transform-runtime",
+		"transform-flow-strip-types",
+		"transform-es2015-parameters"
+	]
+}
