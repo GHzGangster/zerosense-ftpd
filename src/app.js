@@ -17,6 +17,9 @@ var Net = require('./Net.js');
 
 var logger = null;
 
+var DEFAULT_PORT = 9001;
+var DEFAULT_IP = "192,168,2,137";
+
 
 (function() {
 	try {		
@@ -73,6 +76,7 @@ var logger = null;
 
 
 ///////////////////////////////////////
+
 
 function fd_zero() {
 	return Util.pad(0x80);
@@ -149,7 +153,7 @@ function folderTest() {
 				return;
 			}
 			
-			var port = 9001;
+			var port = DEFAULT_PORT;
 			logger.info(`Starting server on port ${port}`);
 			logger.info(`Don't forget to run Stop before leaving!`);
 			s = slisten(port, 2);
@@ -225,7 +229,7 @@ function listenForConnections(r) {
 						var sc = ret;
 						r.fds = fd_set(sc, r.fds);
 						
-						connectionSendStr(sc, "220 zerosense ftpd\r\n");
+						connectionSendStr(sc, "220 zerosense-ftpd\r\n");
 					} else {
 						var bufAddr = 0x8d004000;
 						var bufLength = 0x1000;
@@ -288,7 +292,7 @@ function listenForConnections(r) {
 								var port = getPort(p1x, p2x);
 								var pasv_s = slisten(port, 1);
 								if ((pasv_s & 0xffffffff) > 0) {
-									var serverIp = "192,168,2,137";
+									var serverIp = DEFAULT_IP;
 									connectionSendStr(i, `227 Entering Passive Mode (${serverIp},${p1x},${p2x})\r\n`);
 									
 									result = Net.sys_net_bnet_accept(pasv_s);

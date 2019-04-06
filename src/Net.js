@@ -152,6 +152,22 @@ function sys_net_bnet_recvfrom(s, buf, len, flags, addr, addrlen) {
 	return { ret };
 }
 
+function sys_net_bnet_getsockname(s, addr, paddrlen) {
+	var chain = new ChainBuilder(zero.offsets, zero.addrGtemp)
+			.addDataInt32("ret")
+			.addDataBuffer("addr", paddrlen)
+			.syscall(0x2C0, s, "addr", paddrlen)
+			.storeR3("ret")
+			.create();
+	
+	chain.prepare(zero.zsArray).execute();
+	
+	var ret = chain.getDataInt32("ret");
+	var daddr = chain.getDataBuffer(paddrlen);
+	
+	return { ret, addr: daddr };
+}
+
 module.exports = {
 	sys_net_bnet_socket,
 	sys_net_bnet_bind,
@@ -162,4 +178,5 @@ module.exports = {
 	sys_net_bnet_sendto,
 	sys_net_bnet_select,
 	sys_net_bnet_recvfrom,
+	sys_net_bnet_getsockname,
 };
