@@ -30,63 +30,11 @@ button, input {
 	margin-bottom: 10px;
 }
 
-.fm-path-container {
-	padding: 10px 0;
-}
-
-.fm-path {
-	width: 900px;
-}
-
-.fm-path-go {
-	width: 80px;
-}
-
-.fm-entries-container {
-	border: 1px solid #ccc;
-	padding: 10px;
-	overflow-y: scroll;
-	height: 400px;
-	margin-bottom: 20px;
-}
-
-.fm-entries-table {
-	table-layout: fixed;
-	width: 100%;
-}
-
-.fm-entries-table thead {
-	visibility: collapse;
-}
-
-.fm-entries-table a {
-	color: inherit;
-}
-
-.fm-entry-options-container {
-	position: relative;
-}
-
-.fm-entry-options-button {
-	
-}
-
-.fm-entry-options-menu {
-	display: none;
-	position: absolute;
-	background-color: #383838;
-    padding: 10px;
-}
-
-.fm-entry-options-menu.active {
-	display: block;
-}
-
 #log {
 	border: 1px solid #ccc;
 	padding: 10px;
 	overflow-y: scroll;
-	height: 150px;
+	height: 650px;
 }
 
 #debugTrigger {

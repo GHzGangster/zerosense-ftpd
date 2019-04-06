@@ -1,0 +1,35 @@
+{
+  "name": "zerosense-ftp",
+  "version": "1.0.0",
+  "description": "FTP server in the PS3 browser.",
+  "private": true,
+  "main": "hello.js",
+  "dependencies": {
+    "babel-polyfill": "^6.26.0",
+    "connect": "^3.6.6",
+    "serve-static": "^1.13.2",
+    "zerosense": "github:ghzgangster/zerosense#master"
+  },
+  "devDependencies": {
+    "babel-core": "^6.26.0",
+    "babel-loader": "^7.1.2",
+    "babel-plugin-syntax-flow": "^6.18.0",
+    "babel-plugin-transform-flow-strip-types": "^6.22.0",
+    "babel-plugin-transform-runtime": "^6.23.0",
+    "babel-preset-env": "^1.6.0",
+    "es3ify-loader": "^0.2.0",
+    "eslint": "^5.16.0",
+    "sleep-promise": "^3.0.0",
+    "webpack": "^3.6.0"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "update:zerosense": "npm install github:ghzgangster/zerosense#master",
+    "update:zerosense-dev": "npm install github:ghzgangster/zerosense#dev",
+    "prebuild": "eslint --ignore-path .gitignore src/",
+    "build": "webpack",
+    "start": "node index.js"
+  },
+  "author": "",
+  "license": "See readme"
+}
