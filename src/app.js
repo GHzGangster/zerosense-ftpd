@@ -50,7 +50,12 @@ var DEFAULT_PORT = 9001;
 		} else {
 			logger.info("No PS3 detected. May not work as expected.");
 		}
-		
+	
+		if (!zero.environment.ps3 || zero.environment.firmware !== "4.84" || !zero.environment.dex) {
+			logger.error(`Only 4.84 DEX is supported at the moment.`);
+			return;
+		}
+	
 		zero.memoryReader = new MemoryReader();
 		zero.searcher = new Searcher(zero.memoryReader);
 		zero.offsets = Offsets.get(zero.environment);
