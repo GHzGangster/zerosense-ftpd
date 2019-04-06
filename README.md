@@ -1,4 +1,4 @@
-# zerosense-ftp
+# zerosense-ftpd
 
 An FTP server for the PS3 Browser. Uses [zerosense](https://github.com/GHzGangster/zerosense).
 

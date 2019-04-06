@@ -152,18 +152,19 @@ function sys_net_bnet_recvfrom(s, buf, len, flags, addr, addrlen) {
 	return { ret };
 }
 
-function sys_net_bnet_getsockname(s, addr, paddrlen) {
+function sys_net_bnet_getsockname(s, addrlen) {
 	var chain = new ChainBuilder(zero.offsets, zero.addrGtemp)
 			.addDataInt32("ret")
-			.addDataBuffer("addr", paddrlen)
-			.syscall(0x2C0, s, "addr", paddrlen)
+			.addDataBuffer("addr", addrlen)
+			.addDataInt32("paddrlen", addrlen)
+			.syscall(0x2C0, s, "addr", "paddrlen")
 			.storeR3("ret")
 			.create();
 	
 	chain.prepare(zero.zsArray).execute();
 	
 	var ret = chain.getDataInt32("ret");
-	var daddr = chain.getDataBuffer(paddrlen);
+	var daddr = chain.getDataBuffer("addr", addrlen);
 	
 	return { ret, addr: daddr };
 }

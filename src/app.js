@@ -18,7 +18,6 @@ var Net = require('./Net.js');
 var logger = null;
 
 var DEFAULT_PORT = 9001;
-var DEFAULT_IP = "192,168,2,137";
 
 
 (function() {
@@ -141,7 +140,14 @@ function sclose(fd) {
 	return 0;
 }
 
+var ip = null;
 var s = -1, s_pasv = -1, s_data = -1;
+
+function getServerIP() {
+	var result = HelperTest.call_netctl_main_9A528B81();
+	var ip = Util.getascii(result.ip, 0, 0x10);
+	return ip;
+}
 
 function folderTest() {
 	logger.info("Starting test...");
@@ -154,12 +160,13 @@ function folderTest() {
 			}
 			
 			var port = DEFAULT_PORT;
-			logger.info(`Starting server on port ${port}`);
+			ip = getServerIP();
+			logger.info(`Starting server on ${ip}:${port}`);
 			logger.info(`Don't forget to run Stop before leaving!`);
 			s = slisten(port, 2);
 			if ((s & 0xffffffff) < 0) {
 				return;
-			}
+			}			
 			
 			var fds = fd_zero();
 			fds = fd_set(s, fds);
@@ -292,8 +299,8 @@ function listenForConnections(r) {
 								var port = getPort(p1x, p2x);
 								var pasv_s = slisten(port, 1);
 								if ((pasv_s & 0xffffffff) > 0) {
-									var serverIp = DEFAULT_IP;
-									connectionSendStr(i, `227 Entering Passive Mode (${serverIp},${p1x},${p2x})\r\n`);
+									var pasv_ip = ip.replace(/\./g, ',');
+									connectionSendStr(i, `227 Entering Passive Mode (${pasv_ip},${p1x},${p2x})\r\n`);
 									
 									result = Net.sys_net_bnet_accept(pasv_s);
 									ret = result.ret;

@@ -183,6 +183,19 @@ function printf2(str) {
 	chain.prepare(zero.zsArray).execute();
 }
 
+function call_netctl_main_9A528B81() {	
+	var chain = new ChainBuilder(zero.offsets, zero.addrGtemp)
+		.addDataBuffer("ip", 0x10)
+		.callsub(0x24DBC4, 0x10, "ip", 0, 0, 0, 0, zero.offsets.tocZ1, 0, 0, 0x170)
+		.create();
+	
+	chain.prepare(zero.zsArray).execute();
+	
+	var ip = chain.getDataBuffer("ip", 0x10);
+	
+	return { ip };
+}
+
 module.exports = {
 	malloc,
 	free,
@@ -198,5 +211,6 @@ module.exports = {
 	vsh_E7C34044,
 	sys_net_errno_loc,
 	printf,
-	printf2
+	printf2,
+	call_netctl_main_9A528B81,
 };
