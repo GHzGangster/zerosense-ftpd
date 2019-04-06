@@ -1,6 +1,7 @@
 # zerosense-ftpd
 
 An FTP server for the PS3 Browser. Uses [zerosense](https://github.com/GHzGangster/zerosense).
+Only 4.84 DEX is supported at the moment.
 
 
 ## Setup
