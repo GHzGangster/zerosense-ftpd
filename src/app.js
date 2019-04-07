@@ -145,8 +145,13 @@ function sclose(fd) {
 	return 0;
 }
 
+var bufferSize = 0x200000;
+var bufferAddr = 0x0;
+
 var ip = null;
-var s = -1, s_pasv = -1, s_data = -1;
+
+var s_server = -1;
+var sessions = {};
 
 function getServerIP() {
 	var result = HelperTest.call_netctl_main_9A528B81();
@@ -159,8 +164,19 @@ function folderTest() {
 
 	Promise.resolve()
 		.then(() => {
-			if (s !== -1) {
+			if (s_server !== -1) {
 				logger.debug(`need to close first`);
+				return;
+			}
+			
+			var result = HelperTest.vsh_E7C34044(1);
+			var container = result.ret;
+			logger.debug(`container: 0x${container.toString(16)}`);
+			
+			result = HelperTest.sys_memory_allocate_from_container(bufferSize, container, 0x00000200);
+			bufferAddr = result.alloc_addr;
+			logger.debug(`sys_memory_allocate_from_container: 0x${bufferAddr.toString(16)}`);
+			if (bufferAddr === 0x0) {
 				return;
 			}
 			
@@ -168,13 +184,13 @@ function folderTest() {
 			ip = getServerIP();
 			logger.info(`Starting server on ${ip}:${port}`);
 			logger.info(`Don't forget to run Stop before leaving!`);
-			s = slisten(port, 2);
-			if ((s & 0xffffffff) < 0) {
+			s_server = slisten(port, 2);
+			if ((s_server & 0xffffffff) < 0) {
 				return;
 			}			
 			
 			var fds = fd_zero();
-			fds = fd_set(s, fds);
+			fds = fd_set(s_server, fds);
 			
 			var timeout = Util.bin("\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01"); // 1 microsecond ms
 //			var timeout = Util.bin("\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\x0D\x40"); // 200 ms
@@ -194,15 +210,12 @@ function folderTest2() {
 
 	Promise.resolve()
 		.then(() => {
-			var result = Net.sys_net_bnet_shutdown(s, 2);
-			var ret = result.ret;
-			logger.debug(`shutdown: 0x${ret.toString(16)}`);
+			sclose(s_server);
+			s_server = -1;
 			
-			result = Net.sys_net_bnet_close(s);
-			ret = result.ret;
-			logger.debug(`close: 0x${ret.toString(16)}`);
-			
-			s = -1;
+			var result = HelperTest.sys_memory_free(bufferAddr);
+			var errno = result.errno;
+			logger.debug(`sys_memory_free: 0x${errno.toString(16)}`);
 		})
 		.then(() => logger.info("Test 2 done."))
 		.catch((error) => {
@@ -210,8 +223,6 @@ function folderTest2() {
 			console.error(error);
 		});
 }
-
-var cwd = "/";
 
 /**
  * TODO: Optimize
@@ -231,7 +242,7 @@ function listenForConnections(r) {
 	return new Promise((resolve) => {
 		setTimeout(() => resolve(r), 0);
 	}).then((r) => {
-		if (s <= 0) {
+		if (s_server <= 0) {
 			logger.debug(`socket is closed`);
 			return r;
 		}
@@ -247,8 +258,8 @@ function listenForConnections(r) {
 
 			for (var i = 0; i < 1024; i++) {
 				if (fd_isset(i, readfds)) {
-					if (i === s) {
-						result = Net.sys_net_bnet_accept(s);
+					if (i === s_server) {
+						result = Net.sys_net_bnet_accept(s_server);
 						ret = result.ret;
 						logger.debug(`accept: 0x${ret.toString(16)}`);
 						if ((ret & 0xffffffff) < 0) {
@@ -256,23 +267,22 @@ function listenForConnections(r) {
 							return r;
 						}
 						
-						var sc = ret;
-						r.fds = fd_set(sc, r.fds);
+						let s = sessionOpen(r, ret);
+						onSessionOpened(s);
 						
-						cwd = "/";
-						connectionSendStr(sc, "220 zerosense-ftpd\r\n");
-					} else {
-						var bufAddr = 0x8d004000;
-						var bufLength = 0x1000;
-						result = Net.sys_net_bnet_recvfrom(i, bufAddr, bufLength, 0, 0, 0);
+						continue;
+					}
+					
+					var s = sessions[i];
+					if (s) {
+						result = Net.sys_net_bnet_recvfrom(s.s_client, bufferAddr, bufferSize, 0, 0, 0);
 						ret = result.ret;
 						logger.debug(`recv: 0x${ret.toString(16)}`);
 						
-						if ((ret & 0xffffffff) <= 0) {							
-							sclose(i);
-							r.fds = fd_clr(i, r.fds);
-						} else {							
-							var bufstr = messageReadStr(bufAddr, ret);
+						if ((ret & 0xffffffff) <= 0) {
+							sessionClose(r, s);
+						} else {
+							var bufstr = messageReadStr(bufferAddr, ret);
 							bufstr = bufstr.substr(0, bufstr.indexOf("\r\n"));
 							
 							var command = null, param = null;
@@ -284,74 +294,12 @@ function listenForConnections(r) {
 								command = bufstr;
 							}
 							
-							if (param !== null) {
-								logger.debug(`${command} ${param}`);
-							} else {
-								logger.debug(`${command}`);
-							}
-							
-							if (command === "AUTH") {
-								connectionSendStr(i, "502 Not implemented\r\n");
-							} else if (command === "USER" || command === "PASS") {
-								connectionSendStr(i, "230 Already in\r\n");
-							} else if (command === "SYST") {
-								connectionSendStr(i, "215 UNIX Type: L8\r\n");
-							} else if (command === "FEAT") {
-								connectionSendStr(i, "211-Ext:\r\n"
-									+ " SIZE\r\n"
-									+ " MDTM\r\n"
-									+ " PORT\r\n"
-									+ " CDUP\r\n"
-									+ " ABOR\r\n"
-									+ " PASV\r\n"
-									+ " LIST\r\n"
-									+ " MLSD\r\n"
-									+ " MLST type*;size*;modify*;UNIX.mode*;UNIX.uid*;UNIX.gid*;\r\n"
-									+ "211 End\r\n");
-							} else if (command === "PWD") {
-								connectionSendStr(i, `257 "${cwd}"\r\n`);
-							} else if (command === "TYPE") {
-								connectionSendStr(i, "200 TYPE OK\r\n");
-							} else if (command === "PASV") {
-								var pasv_port = getRandomIntInclusive(32768, 65528);								
-								var p1x = ((pasv_port & 0xff00) >> 8) | 0x80;
-								var p2x = pasv_port & 0xff;
-								var port = getPort(p1x, p2x);
-								var pasv_s = slisten(port, 1);
-								if ((pasv_s & 0xffffffff) > 0) {
-									var pasv_ip = ip.replace(/\./g, ',');
-									connectionSendStr(i, `227 Entering Passive Mode (${pasv_ip},${p1x},${p2x})\r\n`);
-									
-									result = Net.sys_net_bnet_accept(pasv_s);
-									ret = result.ret;
-									logger.debug(`pasv accept: 0x${ret.toString(16)}`);
-									if ((ret & 0xffffffff) < 0) {
-										logger.debug(`accept error: 0x${ret.toString(16)}`);
-									} else {
-										s_pasv = pasv_s;
-										s_data = ret;
-									}
-								}
-							} else if (command === "MLSD") {
-								handleMLSD(i, command, param);
-							} else if (command === "CWD") {
-								if (param.charAt(0) === "/") {
-									cwd = normalize(param + "/");
-								} else {
-									cwd = normalize(cwd + param + "/");
-								}
-								logger.debug(`cwd is now ${cwd}`);
-								connectionSendStr(i, `250 OK\r\n`);
-							} else if (command === "CDUP") {
-								let index = cwd.substr(0, cwd.length - 1).lastIndexOf("/");
-								cwd = cwd.substr(0, index + 1);
-								connectionSendStr(i, `250 OK\r\n`);
-							} else {
-								logger.debug(`command not implemented`);
-								connectionSendStr(i, "502 Not implemented\r\n");
-							}
-						}						
+							sessionHandleCommand(s, command, param);
+						}
+						continue;
 					}
+					
+					// TODO: Get session by data socket, and handle the recv
 				}
 			}
 			
@@ -359,6 +307,109 @@ function listenForConnections(r) {
 		
 		return listenForConnections(r);
 	});
+}
+
+function sessionOpen(r, s_client) {
+	var s = {};
+	s.s_client = s_client;
+	s.s_data = -1;
+	s.s_pasv = -1;
+	s.cwd = "/";
+	
+	sessions[s.s_client] = s;
+	
+	r.fds = fd_set(s.s_client, r.fds);
+	
+	return s;
+}
+
+function sessionClose(r, s) {
+	if (s.s_data !== -1) {
+		sclose(s.s_data);
+	}
+	
+	if (s.s_pasv !== -1) {
+		sclose(s.s_pasv);
+	}
+	
+	if (s.s_client !== -1) {
+		sclose(s.s_client);
+	}
+	
+	r.fds = fd_clr(s.s_client, r.fds);
+	
+	delete sessions[s.s_client];
+}
+
+function onSessionOpened(s) {
+	sessionSendClientStr(s, "220 zerosense-ftpd\r\n");
+}
+
+function sessionHandleCommand(s, command, param) {
+	var result = null, ret = null;
+	
+	if (param !== null) {
+		logger.debug(`${command} ${param}`);
+	} else {
+		logger.debug(`${command}`);
+	}
+	
+	if (command === "AUTH") {
+		sessionSendClientStr(s, "502 Not implemented\r\n");
+	} else if (command === "USER" || command === "PASS") {
+		sessionSendClientStr(s, "230 Already in\r\n");
+	} else if (command === "SYST") {
+		sessionSendClientStr(s, "215 UNIX Type: L8\r\n");
+	} else if (command === "FEAT") {
+		sessionSendClientStr(s, "211-Ext:\r\n"
+			+ " SIZE\r\n"
+			+ " MDTM\r\n"
+			+ " PORT\r\n"
+			+ " CDUP\r\n"
+			+ " ABOR\r\n"
+			+ " PASV\r\n"
+			+ " LIST\r\n"
+			+ " MLSD\r\n"
+			+ " MLST type*;size*;modify*;UNIX.mode*;UNIX.uid*;UNIX.gid*;\r\n"
+			+ "211 End\r\n");
+	} else if (command === "PWD") {
+		sessionSendClientStr(s, `257 "${s.cwd}"\r\n`);
+	} else if (command === "TYPE") {
+		sessionSendClientStr(s, "200 TYPE OK\r\n");
+	} else if (command === "PASV") {
+		var pasv_port = getRandomIntInclusive(32768, 65528);
+		var p1x = ((pasv_port & 0xff00) >> 8) | 0x80;
+		var p2x = pasv_port & 0xff;
+		let port = getPort(p1x, p2x);
+		
+		var pasv_s = slisten(port, 1);
+		if ((pasv_s & 0xffffffff) < 0) {
+			logger.debug(`pasv listen: 0x${ret.toString(16)}`);
+			return;
+		}
+		s.s_pasv = pasv_s;
+		
+		var pasv_ip = ip.replace(/\./g, ',');
+		sessionSendClientStr(s, `227 Entering Passive Mode (${pasv_ip},${p1x},${p2x}).\r\n`);
+	} else if (command === "MLSD") {
+		handleMLSD(s, command, param);
+	} else if (command === "CWD") {
+		if (param.charAt(0) === "/") {
+			s.cwd = normalize(param + "/");
+		} else {
+			s.cwd = normalize(s.cwd + param + "/");
+		}
+		logger.debug(`cwd is now ${s.cwd}`);
+		sessionSendClientStr(s, `250 OK\r\n`);
+	} else if (command === "CDUP") {
+		s.cwd = normalize(param + "../");
+		sessionSendClientStr(s, `250 OK\r\n`);
+//	} else if (command === "STOR") {
+//		handleSTOR(s, command, param);
+	} else {
+		logger.debug(`command not implemented`);
+		sessionSendClientStr(s, "502 Not implemented\r\n");
+	}
 }
 
 function getPort(p1x, p2x) {
@@ -371,9 +422,14 @@ function getRandomIntInclusive(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-function connectionSendStr(sc, str) {
+function sessionSendClientStr(s, str) {
 	var bufStr = Util.ascii(str);
-	Net.sys_net_bnet_sendto(sc, bufStr, str.length, 0, 0, 0);
+	Net.sys_net_bnet_sendto(s.s_client, bufStr, str.length, 0, 0, 0);
+}
+
+function sessionSendDataStr(s, str) {
+	var bufStr = Util.ascii(str);
+	Net.sys_net_bnet_sendto(s.s_data, bufStr, str.length, 0, 0, 0);
 }
 
 function messageReadStr(bufAddr, len) {
@@ -389,35 +445,54 @@ function messageReadStr(bufAddr, len) {
 //////////////////////////
 
 function pad(val, targetLength) {
-    var output = val + '';
+    var output = null;
+    if (typeof val === "number") {
+		output = new String(val);
+    } else {
+		output = val;
+    }
     while (output.length < targetLength) {
         output = '0' + output;
     }
     return output;
 }
 
-function handleMLSD(i, command, param) {
-	connectionSendStr(i, "150 OK\r\n");
+function handleMLSD(s, command, param) {
+	// TODO: Should we accept from the select loop?
 	
-	var result = FileSystem.opendir(cwd);
+	if (s.s_pasv === -1) {
+		logger.error(`s_pasv not ready`);
+		return;
+	}
+	
+	var result = Net.sys_net_bnet_accept(s.s_pasv);
+	var ret = result.ret;
+	logger.debug(`pasv accept: 0x${ret.toString(16)}`);
+	if ((ret & 0xffffffff) < 0) {
+		logger.error(`pasv accept error: 0x${ret.toString(16)}`);
+		return;
+	}
+	s.s_data = ret;
+	
+	result = FileSystem.opendir(s.cwd);
 	var errno = result.errno;
 	var fd = result.fd;
-	logger.debug(`opendir: 0x${errno.toString(16)}`);
 	
 	var data = "";
 	
 	if (errno === 0) {
-		var name = null;
+		sessionSendClientStr(s, "150 OK\r\n");
+		
+		let name = null;
 		do {
 			result = FileSystem.readdir(fd);
 			errno = result.errno;
-			var type = result.type;
 			name = result.name;
 			if (name.length === 0) {
 				break;
 			}
 			
-			var path = cwd + name;
+			var path = s.cwd + name;
 			if (path === "/app_home" || path === "/host_root") {
 				continue;
 			}
@@ -430,38 +505,19 @@ function handleMLSD(i, command, param) {
 			var st_mtime = Util.getint32(st, 0x10);
 			var st_size = Util.getint32(st, 0x28);
 			
+			var isDir = (st_mode & 0o40000) !== 0;
 			var date = new Date(st_mtime * 1000);
 			var unixMode = st_mode & 0o777;
 			
-			var e = "type=";
-			if (name === ".") {
-				e += "c";
-			} else if (name === "..") {
-				e += "p";
-			}
-			if ((st_mode & 0o40000) !== 0) {
-				e += "dir";
-			} else {
-				e += "file";
-			}
-			
-			e += ";siz";
-			if ((st_mode & 0o40000) !== 0) {
-				e += "d";
-			} else {
-				e += "e";
-			}
-			e += "=" + st_size;
-			
-			e += ";modify=" + pad(date.getFullYear(), 4) + pad(date.getMonth() + 1, 2)
-				+ pad(date.getDay(), 2) + pad(date.getHours(), 2) + pad(date.getMinutes(), 2)
-				+ pad(date.getSeconds(), 2);
-				
-			e += ";UNIX.mode=" + pad(unixMode.toString(8), 4);
-			
-			e += ";UNIX.uid=root;UNIX.gid=root; ";
-			
-			e += name + "\r\n";
+			var e = "type=" + (name === "." ? "c" : name === ".." ? "p" : "")
+					+ (isDir ? "dir" : "file")
+				+ ";siz" + (isDir ? "d" : "e") + "=" + st_size
+				+ ";modify=" +  pad(date.getFullYear(), 4) + pad(date.getMonth() + 1, 2)
+					+ pad(date.getDate(), 2) + pad(date.getHours(), 2) + pad(date.getMinutes(), 2)
+					+ pad(date.getSeconds(), 2)
+				+ ";UNIX.mode=" + pad(unixMode.toString(8), 4)
+				+ ";UNIX.uid=root;UNIX.gid=root; "
+				+ name + "\r\n";
 			
 			data += e;
 		} while (name.length > 0);
@@ -469,12 +525,32 @@ function handleMLSD(i, command, param) {
 		result = FileSystem.closedir(fd);
 		errno = result.errno;
 		
-		connectionSendStr(s_data, data);
+		sessionSendDataStr(s, data);
+		
+		sessionSendClientStr(s, "226 OK\r\n");
 	} else {
-		connectionSendStr(i, "550 ERR\r\n");
+		sessionSendClientStr(s, "550 ERR\r\n");
 	}
 	
-	connectionSendStr(i, "226 OK\r\n");
-	sclose(s_data);
+	sclose(s.s_data);
+	s.s_data = -1;
+}
+
+function handleSTOR(s, command, param) {	
+	sessionSendClientStr(s, "150 OK\r\n");
 	
+	var path = s.cwd + param;
+	
+	var result = FileSystem.open(path, 0o102, 0o777);
+	var errno = result.errno;
+	var fd = result.fd;
+	logger.debug(`Errno: 0x${errno.toString(16)}`);
+	
+	// start loop
+	
+	
+	
+	// end loop
+	
+	sessionSendClientStr(s, "226 OK\r\n");
 }

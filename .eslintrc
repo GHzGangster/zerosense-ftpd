@@ -17,6 +17,7 @@
 	"rules": {
 		"no-unused-vars": 0,
 		"no-param-reassign": 0,
-		"no-console": 0
+		"no-console": 0,
+		"no-extra-parens": 0
 	}
 }
