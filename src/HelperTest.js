@@ -196,6 +196,7 @@ function call_netctl_main_9A528B81() {
 	return { ip };
 }
 
+
 module.exports = {
 	malloc,
 	free,

@@ -13,7 +13,7 @@ var FileSystem = require('zerosense/helper/FileSystem');
 
 var HelperTest = require('./HelperTest.js');
 var Net = require('./Net.js');
-
+var normalize = require('./normalize.js');
 
 var logger = null;
 
@@ -44,7 +44,7 @@ var DEFAULT_PORT = 9001;
 	
 	try {
 		logger.clear();
-	
+		
 		if (zero.environment.ps3) {
 			logger.info(`Detected a PS3 on FW ${zero.environment.firmware} ${zero.environment.dex ? 'DEX' : 'CEX'}.`);
 		} else {
@@ -69,7 +69,7 @@ var DEFAULT_PORT = 9001;
 				var buttonFolderTest2 = document.getElementById("buttonFolderTest2");
 				buttonFolderTest2.addEventListener("click", () => folderTest2());
 			})
-			.catch((error) => logger.error(`Error while starting. ${error}`));
+			.catch((error) => logger.error(`Error while starting. ${error} ... If ZsArray is no longer valid, refresh the page.`));
 	} catch (e) {
 		if (zero.environment.ps3) {
 			alert(e);
@@ -176,7 +176,9 @@ function folderTest() {
 			var fds = fd_zero();
 			fds = fd_set(s, fds);
 			
-			var timeout = Util.bin("\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\x0D\x40"); // 200 ms
+			var timeout = Util.bin("\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01"); // 1 microsecond ms
+//			var timeout = Util.bin("\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\x0D\x40"); // 200 ms
+			//var timeout = Util.bin("\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xF4\x02\x40"); // 1 second
 			
 			listenForConnections({ fds, timeout });
 		})
@@ -209,6 +211,22 @@ function folderTest2() {
 		});
 }
 
+var cwd = "/";
+
+/**
+ * TODO: Optimize
+ * 
+ * select loops seem to take about 10 ms or so
+ * to start up again, might want to use a low
+ * timeout (like 5ms?) and while loop a few times
+ * 
+ * post select to pre recv takes 20 ms
+ * fd check could probably be optimized
+ * 
+ * select executes in 50 ms, should be cached
+ * recv executes in 40 ms, should be cached
+ * send should be cached as well
+ */
 function listenForConnections(r) {
 	return new Promise((resolve) => {
 		setTimeout(() => resolve(r), 0);
@@ -220,7 +238,7 @@ function listenForConnections(r) {
 		
 		var result = Net.sys_net_bnet_select(1024, r.fds, 0, 0, r.timeout);
 		var ret = result.ret;
-		//logger.debug(`select: 0x${ret.toString(16)}`);
+//		logger.debug(`select: 0x${ret.toString(16)}`);
 		if ((ret & 0xffffffff) < 0) {
 			logger.debug(`select error: 0x${ret.toString(16)}`);
 			return r;		  
@@ -229,7 +247,7 @@ function listenForConnections(r) {
 
 			for (var i = 0; i < 1024; i++) {
 				if (fd_isset(i, readfds)) {
-					if (i === s) {						
+					if (i === s) {
 						result = Net.sys_net_bnet_accept(s);
 						ret = result.ret;
 						logger.debug(`accept: 0x${ret.toString(16)}`);
@@ -241,20 +259,19 @@ function listenForConnections(r) {
 						var sc = ret;
 						r.fds = fd_set(sc, r.fds);
 						
+						cwd = "/";
 						connectionSendStr(sc, "220 zerosense-ftpd\r\n");
 					} else {
 						var bufAddr = 0x8d004000;
 						var bufLength = 0x1000;
 						result = Net.sys_net_bnet_recvfrom(i, bufAddr, bufLength, 0, 0, 0);
 						ret = result.ret;
-						logger.debug(`recv: 0x${ret.toString(16)} i: 0x${i.toString(16)}`);
+						logger.debug(`recv: 0x${ret.toString(16)}`);
 						
 						if ((ret & 0xffffffff) <= 0) {							
 							sclose(i);
 							r.fds = fd_clr(i, r.fds);
-						} else {
-							logger.debug(`got message`);
-							
+						} else {							
 							var bufstr = messageReadStr(bufAddr, ret);
 							bufstr = bufstr.substr(0, bufstr.indexOf("\r\n"));
 							
@@ -278,22 +295,20 @@ function listenForConnections(r) {
 							} else if (command === "USER" || command === "PASS") {
 								connectionSendStr(i, "230 Already in\r\n");
 							} else if (command === "SYST") {
-								logger.debug(`got syst`);
 								connectionSendStr(i, "215 UNIX Type: L8\r\n");
 							} else if (command === "FEAT") {
-								connectionSendStr(i, "211-Ext:\r\n");
-								connectionSendStr(i, " SIZE\r\n");
-								connectionSendStr(i, " MDTM\r\n");
-								connectionSendStr(i, " PORT\r\n");
-								connectionSendStr(i, " CDUP\r\n");
-								connectionSendStr(i, " ABOR\r\n");
-								connectionSendStr(i, " PASV\r\n");
-								connectionSendStr(i, " LIST\r\n");
-								connectionSendStr(i, " MLSD\r\n");
-								connectionSendStr(i, " MLST type*;size*;modify*;UNIX.mode*;UNIX.uid*;UNIX.gid*;\r\n");
-								connectionSendStr(i, "211 End\r\n");
+								connectionSendStr(i, "211-Ext:\r\n"
+									+ " SIZE\r\n"
+									+ " MDTM\r\n"
+									+ " PORT\r\n"
+									+ " CDUP\r\n"
+									+ " ABOR\r\n"
+									+ " PASV\r\n"
+									+ " LIST\r\n"
+									+ " MLSD\r\n"
+									+ " MLST type*;size*;modify*;UNIX.mode*;UNIX.uid*;UNIX.gid*;\r\n"
+									+ "211 End\r\n");
 							} else if (command === "PWD") {
-								var cwd = "/";
 								connectionSendStr(i, `257 "${cwd}"\r\n`);
 							} else if (command === "TYPE") {
 								connectionSendStr(i, "200 TYPE OK\r\n");
@@ -318,17 +333,28 @@ function listenForConnections(r) {
 									}
 								}
 							} else if (command === "MLSD") {
-								connectionSendStr(i, "150 OK\r\n");
-								connectionSendStr(s_data, "type=cdir;sizd=0;modify=19691231235959;UNIX.mode=0555;UNIX.uid=root;UNIX.gid=root; .\r\n");
-								connectionSendStr(s_data, "type=dir;sizd=0;modify=20190318175228;UNIX.mode=0700;UNIX.uid=root;UNIX.gid=root; app_home\r\n");
-								connectionSendStr(s_data, "type=dir;sizd=91610566656;modify=20190403160033;UNIX.mode=0755;UNIX.uid=root;UNIX.gid=root; dev_hdd0\r\n");
-								connectionSendStr(i, "226 Closing data connection.\r\n");
-								sclose(s_data);
+								handleMLSD(i, command, param);
+							} else if (command === "CWD") {
+								if (param.charAt(0) === "/") {
+									cwd = normalize(param + "/");
+								} else {
+									cwd = normalize(cwd + param + "/");
+								}
+								logger.debug(`cwd is now ${cwd}`);
+								connectionSendStr(i, `250 OK\r\n`);
+							} else if (command === "CDUP") {
+								let index = cwd.substr(0, cwd.length - 1).lastIndexOf("/");
+								cwd = cwd.substr(0, index + 1);
+								connectionSendStr(i, `250 OK\r\n`);
+							} else {
+								logger.debug(`command not implemented`);
+								connectionSendStr(i, "502 Not implemented\r\n");
 							}
-						}
+						}						
 					}
 				}
 			}
+			
 		}
 		
 		return listenForConnections(r);
@@ -358,4 +384,97 @@ function messageReadStr(bufAddr, len) {
 	var buf = zero.memoryReader.read(bufAddr, _len);
 	var bufstr = Util.getascii(buf, 0, _len);
 	return bufstr;
+}
+
+//////////////////////////
+
+function pad(val, targetLength) {
+    var output = val + '';
+    while (output.length < targetLength) {
+        output = '0' + output;
+    }
+    return output;
+}
+
+function handleMLSD(i, command, param) {
+	connectionSendStr(i, "150 OK\r\n");
+	
+	var result = FileSystem.opendir(cwd);
+	var errno = result.errno;
+	var fd = result.fd;
+	logger.debug(`opendir: 0x${errno.toString(16)}`);
+	
+	var data = "";
+	
+	if (errno === 0) {
+		var name = null;
+		do {
+			result = FileSystem.readdir(fd);
+			errno = result.errno;
+			var type = result.type;
+			name = result.name;
+			if (name.length === 0) {
+				break;
+			}
+			
+			var path = cwd + name;
+			if (path === "/app_home" || path === "/host_root") {
+				continue;
+			}
+			
+			result = FileSystem.fstat(path);
+			errno = result.errno;
+			var st = result.sb;
+			
+			var st_mode = Util.getint32(st, 0x0);
+			var st_mtime = Util.getint32(st, 0x10);
+			var st_size = Util.getint32(st, 0x28);
+			
+			var date = new Date(st_mtime * 1000);
+			var unixMode = st_mode & 0o777;
+			
+			var e = "type=";
+			if (name === ".") {
+				e += "c";
+			} else if (name === "..") {
+				e += "p";
+			}
+			if ((st_mode & 0o40000) !== 0) {
+				e += "dir";
+			} else {
+				e += "file";
+			}
+			
+			e += ";siz";
+			if ((st_mode & 0o40000) !== 0) {
+				e += "d";
+			} else {
+				e += "e";
+			}
+			e += "=" + st_size;
+			
+			e += ";modify=" + pad(date.getFullYear(), 4) + pad(date.getMonth() + 1, 2)
+				+ pad(date.getDay(), 2) + pad(date.getHours(), 2) + pad(date.getMinutes(), 2)
+				+ pad(date.getSeconds(), 2);
+				
+			e += ";UNIX.mode=" + pad(unixMode.toString(8), 4);
+			
+			e += ";UNIX.uid=root;UNIX.gid=root; ";
+			
+			e += name + "\r\n";
+			
+			data += e;
+		} while (name.length > 0);
+		
+		result = FileSystem.closedir(fd);
+		errno = result.errno;
+		
+		connectionSendStr(s_data, data);
+	} else {
+		connectionSendStr(i, "550 ERR\r\n");
+	}
+	
+	connectionSendStr(i, "226 OK\r\n");
+	sclose(s_data);
+	
 }
