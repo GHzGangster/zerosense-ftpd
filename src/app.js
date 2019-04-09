@@ -1,4 +1,4 @@
-var zero = require('zerosense');
+const zero = require('zerosense');
 
 var Logger = require('zerosense/Logger');
 var MemoryReader = require('zerosense/MemoryReader');
@@ -13,7 +13,9 @@ var FileSystem = require('zerosense/helper/FileSystem');
 
 var HelperTest = require('./HelperTest.js');
 var Net = require('./Net.js');
+var NetUtil = require('./NetUtil.js');
 var normalize = require('./normalize.js');
+var Session = require('./Session.js');
 
 var logger = null;
 
@@ -63,13 +65,10 @@ var DEFAULT_PORT = 9001;
 		Promise.resolve()
 			.then(() => ZsHelper.initZsArray())
 			.then(() => {
-				var buttonFolderTest = document.getElementById("buttonFolderTest");
-				buttonFolderTest.addEventListener("click", () => folderTest());
-				
-				var buttonFolderTest2 = document.getElementById("buttonFolderTest2");
-				buttonFolderTest2.addEventListener("click", () => folderTest2());
+				document.getElementById("buttonStart").addEventListener("click", () => start());
+				document.getElementById("buttonStop").addEventListener("click", () => stop());
 			})
-			.catch((error) => logger.error(`Error while starting. ${error} ... If ZsArray is no longer valid, refresh the page.`));
+			.catch((error) => logger.error(`Error while starting. ${error}`));
 	} catch (e) {
 		if (zero.environment.ps3) {
 			alert(e);
@@ -82,69 +81,6 @@ var DEFAULT_PORT = 9001;
 ///////////////////////////////////////
 
 
-function fd_zero() {
-	return Util.pad(0x80);
-}
-
-function fd_set(fd, fds) {
-	var fd_off = (fd >> 5) * 4;
-	var fd_val = Util.getint32(fds, fd_off) | (1 << (fd & 0x1f));
-	return Util.setint32(fds, fd_off, fd_val);
-}
-
-function fd_clr(fd, fds) {
-	var fd_off = (fd >> 5) * 4;
-	var fd_val = Util.getint32(fds, fd_off) & ~(1 << (fd & 0x1f));
-	return Util.setint32(fds, fd_off, fd_val);
-}
-
-function fd_isset(fd, fds) {
-	var fd_off = (fd >> 5) * 4;
-	var fd_val = Util.getint32(fds, fd_off) & (1 << (fd & 0x1f));
-	return fd_val !== 0;
-}
-
-function slisten(port, backlog) {
-	var result = Net.sys_net_bnet_socket(2, 1, 0);
-	var s = result.ret;
-	logger.debug(`socket: 0x${s.toString(16)}`);
-	
-	var sa = Util.bin("\x00\x02") + Util.int16(port) + Util.bin("\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00");
-	result = Net.sys_net_bnet_bind(s, sa, 0x10);
-	var ret = result.ret;
-	logger.debug(`bind: 0x${ret.toString(16)}`);
-	if ((ret & 0xffffffff) < 0) {
-		return ret;
-	}
-	
-	result = Net.sys_net_bnet_listen(s, backlog);
-	ret = result.ret;
-	logger.debug(`listen: 0x${ret.toString(16)}`);
-	if ((ret & 0xffffffff) < 0) {
-		return ret;
-	}
-	
-	return s;
-}
-
-function sclose(fd) {
-	var result = Net.sys_net_bnet_shutdown(fd, 2);
-	var ret = result.ret;
-	logger.debug(`shutdown: 0x${ret.toString(16)}`);
-	if ((ret & 0xffffffff) < 0) {
-		return ret;
-	}
-	
-	result = Net.sys_net_bnet_close(fd);
-	ret = result.ret;
-	logger.debug(`close: 0x${ret.toString(16)}`);
-	if ((ret & 0xffffffff) < 0) {
-		return ret;
-	}
-	
-	return 0;
-}
-
 var bufferSize = 0x200000;
 var bufferAddr = 0x0;
 
@@ -154,13 +90,14 @@ var s_server = -1;
 var sessions = {};
 
 function getServerIP() {
-	var result = HelperTest.call_netctl_main_9A528B81();
-	var ip = Util.getascii(result.ip, 0, 0x10);
-	return ip;
+//	var result = HelperTest.call_netctl_main_9A528B81();
+//	var ip = Util.getascii(result.ip, 0, 0x10);
+//	return ip;
+	return "192.168.2.137";
 }
 
-function folderTest() {
-	logger.info("Starting test...");
+function start() {
+	logger.info("Starting...");
 
 	Promise.resolve()
 		.then(() => {
@@ -184,42 +121,42 @@ function folderTest() {
 			ip = getServerIP();
 			logger.info(`Starting server on ${ip}:${port}`);
 			logger.info(`Don't forget to run Stop before leaving!`);
-			s_server = slisten(port, 2);
+			s_server = NetUtil.slisten(port, 2);
 			if ((s_server & 0xffffffff) < 0) {
 				return;
 			}			
 			
-			var fds = fd_zero();
-			fds = fd_set(s_server, fds);
+			var fds = NetUtil.fd_zero();
+			fds = NetUtil.fd_set(s_server, fds);
 			
-			var timeout = Util.bin("\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01"); // 1 microsecond ms
-//			var timeout = Util.bin("\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\x0D\x40"); // 200 ms
+			var timeout = Util.bin("\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01"); // 1 microsecond
+//			var timeout = Util.bin("\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\x0D\x40"); // 200 milliseconds
 			//var timeout = Util.bin("\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xF4\x02\x40"); // 1 second
 			
 			listenForConnections({ fds, timeout });
 		})
-		.then(() => logger.info("Test done."))
+		.then(() => logger.info("Started."))
 		.catch((error) => {
-			logger.error(`Error while running test. ${error}`);
+			logger.error(`Error while starting. ${error}`);
 			console.error(error);
 		});
 }
 
-function folderTest2() {
-	logger.info("Starting test 2...");
+function stop() {
+	logger.info("Stopping...");
 
 	Promise.resolve()
 		.then(() => {
-			sclose(s_server);
+			NetUtil.sclose(s_server);
 			s_server = -1;
 			
 			var result = HelperTest.sys_memory_free(bufferAddr);
 			var errno = result.errno;
 			logger.debug(`sys_memory_free: 0x${errno.toString(16)}`);
 		})
-		.then(() => logger.info("Test 2 done."))
+		.then(() => logger.info("Stopped."))
 		.catch((error) => {
-			logger.error(`Error while running test 2. ${error}`);
+			logger.error(`Error while stopping. ${error}`);
 			console.error(error);
 		});
 }
@@ -237,224 +174,181 @@ function folderTest2() {
  * select executes in 50 ms, should be cached
  * recv executes in 40 ms, should be cached
  * send should be cached as well
+ * 
+ * This loop might be causing us to crash, something 
+ * like a memory or stack issue.
  */
 function listenForConnections(r) {
-	return new Promise((resolve) => {
-		setTimeout(() => resolve(r), 0);
-	}).then((r) => {
-		if (s_server <= 0) {
-			logger.debug(`socket is closed`);
-			return r;
-		}
-		
-		var result = Net.sys_net_bnet_select(1024, r.fds, 0, 0, r.timeout);
-		var ret = result.ret;
-//		logger.debug(`select: 0x${ret.toString(16)}`);
-		if ((ret & 0xffffffff) < 0) {
-			logger.debug(`select error: 0x${ret.toString(16)}`);
-			return r;		  
-		} else if (ret > 0) {
-			var readfds = result.readfds;
+	if (s_server <= 0) {
+		logger.debug(`socket is closed`);
+		return r;
+	}
+	
+	var result = Net.sys_net_bnet_select(1024, r.fds, 0, 0, r.timeout);
+	var ret = result.ret;
+	logger.debug(`select: 0x${ret.toString(16)}`);
+	if ((ret & 0xffffffff) < 0) {
+		logger.debug(`select error: 0x${ret.toString(16)}`);
+		return r;		  
+	} else if (ret > 0) {
+		var readfds = result.readfds;
 
-			for (var i = 0; i < 1024; i++) {
-				if (fd_isset(i, readfds)) {
-					if (i === s_server) {
-						result = Net.sys_net_bnet_accept(s_server);
-						ret = result.ret;
-						logger.debug(`accept: 0x${ret.toString(16)}`);
-						if ((ret & 0xffffffff) < 0) {
-							logger.debug(`accept error: 0x${ret.toString(16)}`);
-							return r;
-						}
-						
-						let s = sessionOpen(r, ret);
-						onSessionOpened(s);
-						
-						continue;
-					}
-					
-					var s = sessions[i];
-					if (s) {
-						result = Net.sys_net_bnet_recvfrom(s.s_client, bufferAddr, bufferSize, 0, 0, 0);
-						ret = result.ret;
-						logger.debug(`recv: 0x${ret.toString(16)}`);
-						
-						if ((ret & 0xffffffff) <= 0) {
-							sessionClose(r, s);
-						} else {
-							var bufstr = messageReadStr(bufferAddr, ret);
-							bufstr = bufstr.substr(0, bufstr.indexOf("\r\n"));
-							
-							var command = null, param = null;
-							var index = bufstr.indexOf(" ");
-							if (index !== -1) {
-								command = bufstr.substr(0, index);
-								param = bufstr.substr(index + 1);
-							} else {
-								command = bufstr;
-							}
-							
-							sessionHandleCommand(s, command, param);
-						}
-						continue;
-					}
-					
-					// TODO: Get session by data socket, and handle the recv
+		if (NetUtil.fd_isset(s_server, readfds)) {
+			result = Net.sys_net_bnet_accept(s_server);
+			ret = result.ret;
+			logger.debug(`accept: 0x${ret.toString(16)}`);
+			if ((ret & 0xffffffff) < 0) {
+				logger.debug(`accept error: 0x${ret.toString(16)}`);
+				return r;
+			}
+			
+			let s_client = ret;
+			let s = new Session(bufferAddr, bufferSize);
+			s.open(s_client);
+			
+			sessions[s.s_client] = s;
+			r.fds = NetUtil.fd_set(s.s_client, r.fds);
+			
+			onSessionOpened(s);
+		} else {
+			let s = null;
+			for (var s_client in sessions) {
+				if (NetUtil.fd_isset(s_client, readfds)) {
+					s = sessions[s_client];
+					break;
 				}
 			}
 			
+			if (s) {
+				result = Net.sys_net_bnet_recvfrom(s.s_client, bufferAddr, bufferSize, 0, 0, 0);
+				ret = result.ret;
+				logger.debug(`recv: 0x${ret.toString(16)}`);
+				
+				if ((ret & 0xffffffff) <= 0) {
+					s.close();
+
+					r.fds = NetUtil.fd_clr(s.s_client, r.fds);
+					delete sessions[s.s_client];
+				} else {
+					var bufstr = s.recvStr(ret);
+					bufstr = bufstr.substr(0, bufstr.indexOf("\r\n"));
+					
+					var command = null, param = null;
+					var index = bufstr.indexOf(" ");
+					if (index !== -1) {
+						command = bufstr.substr(0, index);
+						param = bufstr.substr(index + 1);
+					} else {
+						command = bufstr;
+					}
+					
+					onCommandReceived(s, command, param);
+				}
+			}
+			
+			// TODO: Maybe handle data sockets here
 		}
 		
-		return listenForConnections(r);
-	});
-}
-
-function sessionOpen(r, s_client) {
-	var s = {};
-	s.s_client = s_client;
-	s.s_data = -1;
-	s.s_pasv = -1;
-	s.cwd = "/";
-	
-	sessions[s.s_client] = s;
-	
-	r.fds = fd_set(s.s_client, r.fds);
-	
-	return s;
-}
-
-function sessionClose(r, s) {
-	if (s.s_data !== -1) {
-		sclose(s.s_data);
 	}
 	
-	if (s.s_pasv !== -1) {
-		sclose(s.s_pasv);
-	}
-	
-	if (s.s_client !== -1) {
-		sclose(s.s_client);
-	}
-	
-	r.fds = fd_clr(s.s_client, r.fds);
-	
-	delete sessions[s.s_client];
+	setTimeout(() => listenForConnections(r), 1);
 }
 
 function onSessionOpened(s) {
-	sessionSendClientStr(s, "220 zerosense-ftpd\r\n");
+	s.sendStr("220 zerosense-ftpd\r\n");
 }
 
-function sessionHandleCommand(s, command, param) {
-	var result = null, ret = null;
-	
+function onCommandReceived(s, command, param) {	
 	if (param !== null) {
 		logger.debug(`${command} ${param}`);
 	} else {
 		logger.debug(`${command}`);
 	}
 	
-	if (command === "AUTH") {
-		sessionSendClientStr(s, "502 Not implemented\r\n");
-	} else if (command === "USER" || command === "PASS") {
-		sessionSendClientStr(s, "230 Already in\r\n");
-	} else if (command === "SYST") {
-		sessionSendClientStr(s, "215 UNIX Type: L8\r\n");
-	} else if (command === "FEAT") {
-		sessionSendClientStr(s, "211-Ext:\r\n"
-			+ " SIZE\r\n"
-			+ " MDTM\r\n"
-			+ " PORT\r\n"
-			+ " CDUP\r\n"
-			+ " ABOR\r\n"
-			+ " PASV\r\n"
-			+ " LIST\r\n"
-			+ " MLSD\r\n"
-			+ " MLST type*;size*;modify*;UNIX.mode*;UNIX.uid*;UNIX.gid*;\r\n"
-			+ "211 End\r\n");
-	} else if (command === "PWD") {
-		sessionSendClientStr(s, `257 "${s.cwd}"\r\n`);
-	} else if (command === "TYPE") {
-		sessionSendClientStr(s, "200 TYPE OK\r\n");
-	} else if (command === "PASV") {
-		var pasv_port = getRandomIntInclusive(32768, 65528);
-		var p1x = ((pasv_port & 0xff00) >> 8) | 0x80;
-		var p2x = pasv_port & 0xff;
-		let port = getPort(p1x, p2x);
+	switch (command) {
+		case "USER":
+		case "PASS":
+			s.sendStr("230 User logged in, proceed.\r\n");
+			break;
+			
+		case "SYST":
+			s.sendStr("215 UNIX system type.\r\n");
+			break;
 		
-		var pasv_s = slisten(port, 1);
-		if ((pasv_s & 0xffffffff) < 0) {
-			logger.debug(`pasv listen: 0x${ret.toString(16)}`);
-			return;
-		}
-		s.s_pasv = pasv_s;
+		case "FEAT":
+			s.sendStr("211- Extensions supported:\r\n"
+				+ " SIZE\r\n"
+				+ " MDTM\r\n"
+				+ " PORT\r\n"
+				+ " CDUP\r\n"
+				+ " ABOR\r\n"
+				+ " PASV\r\n"
+				+ " LIST\r\n"
+				+ " MLSD\r\n"
+				+ " MLST type*;size*;modify*;UNIX.mode*;UNIX.uid*;UNIX.gid*;\r\n"
+				+ "211 End\r\n");
+			break;
 		
-		var pasv_ip = ip.replace(/\./g, ',');
-		sessionSendClientStr(s, `227 Entering Passive Mode (${pasv_ip},${p1x},${p2x}).\r\n`);
-	} else if (command === "MLSD") {
-		handleMLSD(s, command, param);
-	} else if (command === "CWD") {
-		if (param.charAt(0) === "/") {
-			s.cwd = normalize(param + "/");
-		} else {
-			s.cwd = normalize(s.cwd + param + "/");
-		}
-		logger.debug(`cwd is now ${s.cwd}`);
-		sessionSendClientStr(s, `250 OK\r\n`);
-	} else if (command === "CDUP") {
-		s.cwd = normalize(param + "../");
-		sessionSendClientStr(s, `250 OK\r\n`);
-//	} else if (command === "STOR") {
-//		handleSTOR(s, command, param);
-	} else {
-		logger.debug(`command not implemented`);
-		sessionSendClientStr(s, "502 Not implemented\r\n");
+		case "PWD":
+			s.sendStr(`257 "${s.cwd}" is your current location.\r\n`);
+			break;
+		
+		case "TYPE":
+			s.sendStr("200 Command okay.\r\n");
+			break;
+		
+		case "PASV":
+			handlePASV(s);
+			break;
+		
+		case "MLSD":
+			handleMLSD(s, command, param);
+			break;
+		
+		case "CWD":
+			if (param.charAt(0) === "/") {
+				s.cwd = normalize(param + "/");
+			} else {
+				s.cwd = normalize(s.cwd + param + "/");
+			}
+			logger.debug(`cwd is now ${s.cwd}`);
+			s.sendStr(`250 Requested file action okay, completed.\r\n`);
+			break;
+		
+		case "CDUP":
+			s.cwd = normalize(s.cwd + "../");
+			s.sendStr(`250 Requested file action okay, completed.\r\n`);
+			break;
+		
+//		case "STOR":
+//			handleSTOR(s, command, param);
+//			break;
+		
+		default:
+			logger.debug(`command not implemented`);
+			s.sendStr("502 Command not implemented.\r\n");
 	}
 }
 
-function getPort(p1x, p2x) {
-	return (p1x * 256) + p2x;
-}
-
-function getRandomIntInclusive(min, max) {
-  min = Math.ceil(min);
-  max = Math.floor(max);
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-}
-
-function sessionSendClientStr(s, str) {
-	var bufStr = Util.ascii(str);
-	Net.sys_net_bnet_sendto(s.s_client, bufStr, str.length, 0, 0, 0);
-}
-
-function sessionSendDataStr(s, str) {
-	var bufStr = Util.ascii(str);
-	Net.sys_net_bnet_sendto(s.s_data, bufStr, str.length, 0, 0, 0);
-}
-
-function messageReadStr(bufAddr, len) {
-	var _len = len;
-	if ((_len % 2) !== 0) {
-		_len += 1;
-	}
-	var buf = zero.memoryReader.read(bufAddr, _len);
-	var bufstr = Util.getascii(buf, 0, _len);
-	return bufstr;
-}
 
 //////////////////////////
 
-function pad(val, targetLength) {
-    var output = null;
-    if (typeof val === "number") {
-		output = new String(val);
-    } else {
-		output = val;
-    }
-    while (output.length < targetLength) {
-        output = '0' + output;
-    }
-    return output;
+
+function handlePASV(s) {
+	var pasv_port = getRandomIntInclusive(32768, 65528);
+	var p1x = ((pasv_port & 0xff00) >> 8) | 0x80;
+	var p2x = pasv_port & 0xff;
+	let port = getPort(p1x, p2x);
+	
+	var pasv_s = NetUtil.slisten(port, 1);
+	if ((pasv_s & 0xffffffff) < 0) {
+		logger.debug(`pasv listen: 0x${pasv_s.toString(16)}`);
+		return;
+	}
+	s.s_pasv = pasv_s;
+	
+	var pasv_ip = ip.replace(/\./g, ',');
+	s.sendStr(`227 Entering Passive Mode (${pasv_ip},${p1x},${p2x}).\r\n`);
 }
 
 function handleMLSD(s, command, param) {
@@ -481,18 +375,18 @@ function handleMLSD(s, command, param) {
 	var data = "";
 	
 	if (errno === 0) {
-		sessionSendClientStr(s, "150 OK\r\n");
+		s.sendStr("150 OK\r\n");
 		
-		let name = null;
+		let filename = null;
 		do {
 			result = FileSystem.readdir(fd);
 			errno = result.errno;
-			name = result.name;
-			if (name.length === 0) {
+			filename = result.name;
+			if (filename.length === 0) {
 				break;
 			}
 			
-			var path = s.cwd + name;
+			var path = s.cwd + filename;
 			if (path === "/app_home" || path === "/host_root") {
 				continue;
 			}
@@ -509,7 +403,7 @@ function handleMLSD(s, command, param) {
 			var date = new Date(st_mtime * 1000);
 			var unixMode = st_mode & 0o777;
 			
-			var e = "type=" + (name === "." ? "c" : name === ".." ? "p" : "")
+			var e = "type=" + (filename === "." ? "c" : filename === ".." ? "p" : "")
 					+ (isDir ? "dir" : "file")
 				+ ";siz" + (isDir ? "d" : "e") + "=" + st_size
 				+ ";modify=" +  pad(date.getFullYear(), 4) + pad(date.getMonth() + 1, 2)
@@ -517,27 +411,27 @@ function handleMLSD(s, command, param) {
 					+ pad(date.getSeconds(), 2)
 				+ ";UNIX.mode=" + pad(unixMode.toString(8), 4)
 				+ ";UNIX.uid=root;UNIX.gid=root; "
-				+ name + "\r\n";
+				+ filename + "\r\n";
 			
 			data += e;
-		} while (name.length > 0);
+		} while (filename.length > 0);
 		
 		result = FileSystem.closedir(fd);
 		errno = result.errno;
 		
-		sessionSendDataStr(s, data);
+		s.sendStrData(data);
 		
-		sessionSendClientStr(s, "226 OK\r\n");
+		s.sendStr("226 OK\r\n");
 	} else {
-		sessionSendClientStr(s, "550 ERR\r\n");
+		s.sendStr("550 ERR\r\n");
 	}
 	
-	sclose(s.s_data);
+	NetUtil.sclose(s.s_data);
 	s.s_data = -1;
 }
 
 function handleSTOR(s, command, param) {	
-	sessionSendClientStr(s, "150 OK\r\n");
+	s.sendStr("150 OK\r\n");
 	
 	var path = s.cwd + param;
 	
@@ -552,5 +446,32 @@ function handleSTOR(s, command, param) {
 	
 	// end loop
 	
-	sessionSendClientStr(s, "226 OK\r\n");
+	s.sendStr("226 OK\r\n");
+}
+
+
+//////////////////////////
+
+
+function getPort(p1x, p2x) {
+	return (p1x * 256) + p2x;
+}
+
+function getRandomIntInclusive(min, max) {
+  min = Math.ceil(min);
+  max = Math.floor(max);
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function pad(val, targetLength) {
+    var output = null;
+    if (typeof val === "number") {
+		output = new String(val);
+    } else {
+		output = val;
+    }
+    while (output.length < targetLength) {
+        output = '0' + output;
+    }
+    return output;
 }
