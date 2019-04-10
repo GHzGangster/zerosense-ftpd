@@ -25,18 +25,33 @@ class Session {
 	close() {
 		if (this.s_data !== -1) {
 			NetUtil.sclose(this.s_data);
+			this.s_data = -1;
 		}
 		if (this.s_pasv !== -1) {
 			NetUtil.sclose(this.s_pasv);
+			this.s_pasv = -1;
 		}
 		if (this.s_client !== -1) {
 			NetUtil.sclose(this.s_client);
+			this.s_client = -1;
+		}
+	}
+	
+	openData(s_data) {
+		this.s_data = s_data;
+	}
+	
+	closeData() {
+		if (this.s_data !== -1) {
+			NetUtil.sclose(this.s_data);
+			this.s_data = -1;
 		}
 	}
 	
 	sendStr(str) {
 		var bufStr = Util.ascii(str);
 		Net.sys_net_bnet_sendto(this.s_client, bufStr, str.length, 0, 0, 0);
+		zero.logger.debug(str);
 	}
 	
 	sendStrData(str) {

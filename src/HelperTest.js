@@ -196,6 +196,21 @@ function call_netctl_main_9A528B81() {
 	return { ip };
 }
 
+function sys_net_bnet_setsockopt(s, level, optname, optval, optlen) {
+	var chain = new ChainBuilder(zero.offsets, zero.addrGtemp)
+		.addDataInt32("errno")
+		.addDataStr("optval", optval)
+		.syscall(0x2C7, s, level, optname, "optval", optlen)
+		.storeR3("errno")
+		.create();
+	
+	chain.prepare(zero.zsArray).execute();
+	
+	var errno = chain.getDataInt32("errno");
+	
+	return { errno };
+}
+
 
 module.exports = {
 	malloc,
@@ -214,4 +229,5 @@ module.exports = {
 	printf,
 	printf2,
 	call_netctl_main_9A528B81,
+	sys_net_bnet_setsockopt,
 };
