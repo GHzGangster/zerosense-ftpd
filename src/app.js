@@ -19,7 +19,7 @@ var Session = require('./Session.js');
 
 var logger = null;
 
-var DEFAULT_PORT = 9002;
+var DEFAULT_PORT = 9001;
 
 
 (function() {
