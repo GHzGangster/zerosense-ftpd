@@ -90,10 +90,10 @@ var s_server = -1;
 var sessions = {};
 
 function getServerIP() {
-//	var result = HelperTest.call_netctl_main_9A528B81();
-//	var ip = Util.getascii(result.ip, 0, 0x10);
-//	return ip;
-	return "192.168.2.137";
+	var result = HelperTest.call_netctl_main_9A528B81();
+	var ip = Util.getascii(result.ip, 0, 0x10);
+	return ip;
+//	return "192.168.2.137";
 }
 
 function start() {
