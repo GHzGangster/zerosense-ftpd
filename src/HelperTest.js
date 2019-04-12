@@ -211,6 +211,94 @@ function sys_net_bnet_setsockopt(s, level, optname, optval, optlen) {
 	return { errno };
 }
 
+function sys_net_bnet_getsockopt(s, level, optname, optval, optlen) {
+	var chain = new ChainBuilder(zero.offsets, zero.addrGtemp)
+		.addDataInt32("errno")
+		.addDataBuffer("optval", optlen)
+		.addDataStr("optlen", Util.int32(optlen))
+		.syscall(0x2C1, s, level, optname, "optval", "optlen")
+		.storeR3("errno")
+		.create();
+	
+	chain.prepare(zero.zsArray).execute();
+	
+	var errno = chain.getDataInt32("errno");
+	var doptlen = chain.getDataInt32("optlen");
+	var doptval = chain.getDataBuffer("optval", doptlen);
+	
+	return { errno, optval: doptval, optlen: doptlen };
+}
+
+function createRecvFrom(s, buf, len, flags, addr, addrlen) {
+	var chain = new ChainBuilder(zero.offsets, zero.addrGtemp)
+		.addDataInt32("ret")
+		.syscall(0x2C3, s, buf, len, flags, 0, 0)
+		.storeR3("ret")
+		.create();
+	
+	return chain;
+}
+
+function executeRecvFrom(chain) {
+	chain.execute();
+	
+	var ret = chain.getDataInt32("ret");
+	
+	return { ret };
+}
+
+function sys_fs_unlink(path) {
+	var cb = new ChainBuilder(zero.offsets, zero.addrGtemp)
+		.addDataInt32("errno");
+	
+	var _path = path;
+	if (typeof path === "string") {
+		_path = "_path";
+		cb.addDataStr(_path, Util.ascii(path));
+	}
+	
+	var chain = cb.syscall(0x32E, _path)
+		.storeR3("errno")
+		.create();
+	
+	chain.prepare(zero.zsArray).execute();
+	
+	var errno = chain.getDataInt32("errno");
+	
+	return { errno };
+}
+
+function sys_net_get_sockinfo(s, info, n) {	
+	var chain = new ChainBuilder(zero.offsets, zero.addrGtemp)
+		.addDataInt32("ret")
+		.addDataBuffer("info", 0x24 * n)
+		.callsub2(0x21038, zero.offsets.toc, s, "info", n)
+		.storeR3("ret")
+		.create();
+	
+	chain.prepare(zero.zsArray).execute();
+	
+	var ret = chain.getDataInt32("ret");
+	var dinfo = chain.getDataBuffer("info", 0x24 * n);
+	
+	return { ret, info: dinfo };
+}
+
+function rmdir(strpath) {
+	var chain = new ChainBuilder(zero.offsets, zero.addrGtemp)
+		.addDataStr("path", Util.ascii(strpath))
+		.addDataInt32("errno")
+		.syscall(0x32D, "path")
+		.storeR3("errno")
+		.create();
+	
+	chain.prepare(zero.zsArray).execute();
+	
+	var errno = chain.getDataInt32("errno");
+	
+	return { errno };
+}
+
 
 module.exports = {
 	malloc,
@@ -230,4 +318,10 @@ module.exports = {
 	printf2,
 	call_netctl_main_9A528B81,
 	sys_net_bnet_setsockopt,
+	sys_net_bnet_getsockopt,
+	createRecvFrom,
+	executeRecvFrom,
+	sys_fs_unlink,
+	sys_net_get_sockinfo,
+	rmdir,
 };

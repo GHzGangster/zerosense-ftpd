@@ -345,13 +345,7 @@ function onCommandReceived(s, command, param) {
 			break;
 		
 		case "CWD":
-			if (param.charAt(0) === "/") {
-				s.cwd = normalize(param + "/");
-			} else {
-				s.cwd = normalize(s.cwd + param + "/");
-			}
-			logger.debug(`cwd is now ${s.cwd}`);
-			s.sendStr(`250 Requested file action okay, completed.\r\n`);
+			handleCwd(s, param);
 			break;
 		
 		case "CDUP":
@@ -367,6 +361,14 @@ function onCommandReceived(s, command, param) {
 			handleDelete(s, param);
 			break;
 		
+		case "MKD":
+			handleMkdir(s, param);
+			break;
+			
+		case "RMD":
+			handleRmdir(s, param);
+			break;
+			
 		default:
 			logger.debug(`command not implemented`);
 			s.sendStr("502 Command not implemented.\r\n");
@@ -376,6 +378,54 @@ function onCommandReceived(s, command, param) {
 
 //////////////////////////
 
+
+function handleCwd(s, param) {
+	var cwd = null;
+	if (param.charAt(0) === "/") {
+		cwd = normalize(param + "/");
+	} else {
+		cwd = normalize(s.cwd + param + "/");
+	}
+	
+	var result = FileSystem.fstat(cwd);
+	var errno = result.errno;
+	var st = result.sb;
+			
+	var st_mode = Util.getint32(st, 0x0);
+	
+	var isDir = (st_mode & 0o40000) !== 0;
+	if (isDir) {
+		s.cwd = cwd;
+		logger.debug(`cwd is now ${s.cwd}`);
+		s.sendStr(`250 Requested file action okay, completed.\r\n`);
+	} else {
+		s.sendStr("550 Requested action not taken; file unavailable.\r\n");
+	}
+}
+
+function handleMkdir(s, foldername) {
+	var path = s.cwd + foldername;
+	
+	var result = FileSystem.mkdir(path, 0o700);
+	var errno = result.errno;
+	if (errno === 0) {
+		s.sendStr(`257 "${foldername}" created.\r\n`);
+	} else {
+		s.sendStr(`550 Requested action not taken; file unavailable.\r\n`);
+	}
+}
+
+function handleRmdir(s, foldername) {
+	var path = s.cwd + foldername;
+	
+	var result = HelperTest.rmdir(path);
+	var errno = result.errno;
+	if (errno === 0) {
+		s.sendStr(`250 Requested file action okay, completed.\r\n`);
+	} else {
+		s.sendStr(`550 Requested action not taken; file unavailable.\r\n`);
+	}
+}
 
 function handlePASV(s) {
 	var pasv_port = getRandomIntInclusive(32768, 65528);

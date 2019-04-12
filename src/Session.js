@@ -15,11 +15,13 @@ class Session {
 		this.s_data = -1;
 		this.s_pasv = -1;
 		
+		this.localIp = "0.0.0.0";
 		this.cwd = "/";
 	}
 	
-	open(s_client) {
+	open(s_client, localIp) {
 		this.s_client = s_client;
+		this.localIp = localIp;
 	}
 	
 	close() {
