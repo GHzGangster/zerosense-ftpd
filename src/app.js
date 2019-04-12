@@ -81,19 +81,24 @@ var DEFAULT_PORT = 9001;
 ///////////////////////////////////////
 
 
-var bufferSize = 0x200000;
 var bufferAddr = 0x0;
+
+var bufferSizeData = 0x800000;
+var bufferSizeCache = 0x100000;
+
+var bufferSize = bufferSizeData + bufferSizeCache;
 
 var ip = null;
 
 var s_server = -1;
 var sessions = {};
 
+var transferring = false;
+
 function getServerIP() {
 	var result = HelperTest.call_netctl_main_9A528B81();
 	var ip = Util.getascii(result.ip, 0, 0x10);
 	return ip;
-//	return "192.168.2.137";
 }
 
 function start() {
@@ -124,7 +129,7 @@ function start() {
 			s_server = NetUtil.slisten(port, 2);
 			if ((s_server & 0xffffffff) < 0) {
 				return;
-			}			
+			}
 			
 			var fds = NetUtil.fd_zero();
 			fds = NetUtil.fd_set(s_server, fds);
@@ -133,6 +138,7 @@ function start() {
 //			var timeout = Util.bin("\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\x0D\x40"); // 200 milliseconds
 			//var timeout = Util.bin("\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xF4\x02\x40"); // 1 second
 			
+			transferring = false;
 			listenForConnections({ fds, timeout });
 		})
 		.then(() => logger.info("Started."))
@@ -189,9 +195,15 @@ function listenForConnections(r) {
 		return r;
 	}
 	
+	if (transferring) {
+		logger.debug(`busy transferring...`);
+		setTimeout(() => listenForConnections(r), 1000);
+		return;
+	}
+	
 	var result = Net.sys_net_bnet_select(1024, r.fds, 0, 0, r.timeout);
 	var ret = result.ret;
-	//logger.debug(`select: 0x${ret.toString(16)}`);
+//	logger.debug(`select: 0x${ret.toString(16)}`);
 	if ((ret & 0xffffffff) < 0) {
 		logger.debug(`select error: 0x${ret.toString(16)}`);
 		return r;		  
@@ -207,18 +219,18 @@ function listenForConnections(r) {
 				return r;
 			}
 			
+			result = HelperTest.sys_net_get_sockinfo(ret, 0, 1);
+			var info = result.info;
+			let ip = Util.getint32(info, 0x10);
+			let localIp = ((ip >> 24) & 0xff) + "." + ((ip >> 16) & 0xff) + "." + ((ip >> 8) & 0xff) + "." + (ip & 0xff);
+			
 			let s_client = ret;
-			let s = new Session(bufferAddr, bufferSize);
-			s.open(s_client);
+			let s = new Session(bufferAddr, bufferSizeData);
+			s.open(s_client, localIp);
 			
 			sessions[s.s_client] = s;
 			r.fds = NetUtil.fd_set(s.s_client, r.fds);
-			
-			var optval = Util.int32(512000);
-			HelperTest.sys_net_bnet_setsockopt(s.s_client, 0xffff, 0x1001, optval, 4);
-			
-			optval = Util.int32(512000);
-			HelperTest.sys_net_bnet_setsockopt(s.s_client, 0xffff, 0x1002, optval, 4);
+			setSocketOptions(s.s_client);
 			
 			onSessionOpened(s);
 		} else {
@@ -265,7 +277,22 @@ function listenForConnections(r) {
 	setTimeout(() => listenForConnections(r), 1);
 }
 
+function setSocketOptions(s) {
+	// Set SNDBUF to 512KB
+	var optval = Util.int32(512000);
+	HelperTest.sys_net_bnet_setsockopt(s, 0xffff, 0x1001, optval, 4);
+	
+	// Set RCVBUF to 512KB
+	optval = Util.int32(512000);
+	HelperTest.sys_net_bnet_setsockopt(s, 0xffff, 0x1002, optval, 4);
+	
+	// Disable Nagle's Algorithm
+	optval = Util.int32(1);
+	HelperTest.sys_net_bnet_setsockopt(s, 0x6, 0x1, optval, 4);
+}
+
 function onSessionOpened(s) {
+	logger.debug(s.localIp);
 	s.sendStr("220-zerosense-ftpd\r\n"
 		+ "220 Features: a .\r\n");
 }
@@ -336,6 +363,10 @@ function onCommandReceived(s, command, param) {
 			handleSTOR(s, command, param);
 			break;
 		
+		case "DELE":
+			handleDelete(s, param);
+			break;
+		
 		default:
 			logger.debug(`command not implemented`);
 			s.sendStr("502 Command not implemented.\r\n");
@@ -359,7 +390,7 @@ function handlePASV(s) {
 	}
 	s.s_pasv = pasv_s;
 	
-	var pasv_ip = ip.replace(/\./g, ',');
+	var pasv_ip = s.localIp.replace(/\./g, ',');
 	s.sendStr(`227 Entering Passive Mode (${pasv_ip},${p1x},${p2x}).\r\n`);
 }
 
@@ -379,6 +410,8 @@ function handleMLSD(s, command, param) {
 		return;
 	}
 	s.openData(ret);
+	setSocketOptions(s.s_data);
+	
 	
 	result = FileSystem.opendir(s.cwd);
 	var errno = result.errno;
@@ -455,6 +488,7 @@ function handleSTOR(s, command, param) {
 		return;
 	}
 	s.openData(ret);
+	setSocketOptions(s.s_data);
 	
 	
 	s.sendStr("150 OK\r\n");
@@ -466,7 +500,19 @@ function handleSTOR(s, command, param) {
 	var fd = result.fd;
 	logger.debug(`open: 0x${errno.toString(16)}`);
 	
-	var data = { s, fd };
+	var bufsize = 0x40000;
+	
+	var chainRecv = HelperTest.createRecvFrom(s.s_data, s.bufferAddr, bufsize, 0x40, 0, 0);
+	result = cacheChain(chainRecv, s.bufferAddr + s.bufferSize);
+	//var addrRecvRet = result.dataAddr + chainRecv.getDataOffset("ret");
+	// Need to load r3 into r5
+	
+	var chainWrite = HelperTest.createWritePtr(fd, s.bufferAddr, bufsize);
+	result = cacheChain(chainWrite, s.bufferAddr + s.bufferSize + 0x1000);
+	
+	transferring = true;
+	
+	var data = { s, fd, chainRecv, chainWrite, bufsize };
 	loopSTOR(data).then(() => {
 		result = FileSystem.close(fd);
 		errno = result.errno;
@@ -476,32 +522,78 @@ function handleSTOR(s, command, param) {
 		
 		
 		s.closeData();
+		
+		transferring = false;
 	});
 }
 
 function loopSTOR(data) {
 	return new Promise((resolve) => {
-		var result = Net.sys_net_bnet_recvfrom(data.s.s_data, data.s.bufferAddr, data.s.bufferSize, 0x40, 0, 0);
-		var ret = result.ret;
-		logger.debug(`stor recv: 0x${ret.toString(16)}`);
+		var time = 0;
 		
-		if ((ret & 0xffffffff) > 0) {
-			result = FileSystem.writePtr(data.fd, data.s.bufferAddr, ret);
-			var errno = result.errno;
-			var written = result.written;
-			logger.debug(`stor write: 0x${errno.toString(16)}`);
-			logger.debug(`stor written: 0x${written.toString(16)}`);
+		var keepGoing = true;
+		
+		var runTime = 0;
+		while (runTime < 5000) {
+			let runStart = new Date().getTime();
 			
-			if (written > 0) {
-				logger.debug(`stor continue`);
-				setTimeout(() => resolve(loopSTOR(data)), 1);
-				return;
+			time = new Date().getTime();
+			var result = HelperTest.executeRecvFrom(data.chainRecv);
+			var ret = result.ret;
+			time = new Date().getTime() - time;
+			logger.debug(`stor recv: 0x${ret.toString(16)} -- took ${time} ms`);
+			
+			let written = 0;
+			
+			if ((ret & 0xffffffff) > 0) {
+				time = new Date().getTime();
+				
+				let cached = false;
+				if (ret === data.bufsize) {
+					cached = true;
+					result = HelperTest.executeWritePtr(data.chainWrite);
+				} else {
+					result = FileSystem.writePtr(data.fd, data.s.bufferAddr, ret);
+				}
+				
+				var errno = result.errno;
+				written = result.written;
+				time = new Date().getTime() - time;
+				
+				logger.debug(`stor write: 0x${errno.toString(16)} -- took ${time} ms`);
+				logger.debug(`stor written: 0x${written.toString(16)} -- cached: ${cached}`);
 			}
+			
+			if ((ret & 0xffffffff) <= 0 || written <= 0) {
+				keepGoing = false;
+				break;
+			}
+			
+			runTime += new Date().getTime() - runStart;
 		}
 		
-		logger.debug(`stor stop`);
-		setTimeout(() => resolve(data), 1);
+		if (keepGoing) {
+			setTimeout(() => resolve(loopSTOR(data)), 1);
+		} else {
+			logger.debug(`stor stop`);
+			setTimeout(() => resolve(data), 1);
+		}
 	});
+}
+
+function handleDelete(s, filename) {	
+	var path = s.cwd + filename;
+	logger.debug(path);
+	
+	var result = HelperTest.sys_fs_unlink(path);
+	var errno = result.errno;
+	logger.debug(`dele unlink: 0x${errno.toString(16)}`);
+	if ((errno & 0xffffffff) > 0) {
+		s.sendStr("550 Requested action not taken; file unavailable.\r\n");
+		return;
+	}
+
+	s.sendStr(`250 Requested file action okay, completed.\r\n`);
 }
 
 
@@ -529,4 +621,52 @@ function pad(val, targetLength) {
         output = '0' + output;
     }
     return output;
+}
+
+
+//////////////////////////
+
+
+function cacheChain(chain, cacheStart) {
+	var cacheAddr = cacheStart;
+
+	var data = chain.cb.getData();
+	var dataSize = data.length * 2;
+	var dataAddr = zero.zsArray.getAddress(data);
+	chain.cb.updateDataAddress(dataAddr);
+	
+	var stack = chain.cb.getChain();
+	var stackSize = stack.length * 2;
+	var stackAddr = zero.zsArray.getAddress(stack);
+	var stackCacheAddr = cacheAddr;
+	cacheAddr += stackSize;
+	if ((cacheAddr % 0x10) > 0) {
+		cacheAddr += 0x10 - (cacheAddr % 0x10);
+	}
+	
+	var setup2 = chain.setup2Make(stackCacheAddr + 0x4);
+	var setup2Size = setup2.length * 2;
+	var setup2Addr = zero.zsArray.getAddress(setup2);
+	var setup2CacheAddr = cacheAddr;
+	cacheAddr += setup2Size;
+	if ((cacheAddr % 0x10) > 0) {
+		cacheAddr += 0x10 - (cacheAddr % 0x10);
+	}
+	
+	var setup1 = chain.setup1Make(setup2CacheAddr);
+	var setup1Size = setup1.length * 2;
+	var setup1Addr = zero.zsArray.getAddress(setup1);
+	var setup1CacheAddr = cacheAddr;
+	cacheAddr += setup1Size;
+	if ((cacheAddr % 0x10) > 0) {
+		cacheAddr += 0x10 - (cacheAddr % 0x10);
+	}
+	
+	HelperTest.memcpy(stackCacheAddr, stackAddr, stackSize);
+	HelperTest.memcpy(setup2CacheAddr, setup2Addr, setup2Size);
+	HelperTest.memcpy(setup1CacheAddr, setup1Addr, setup1Size);
+	
+	chain.addrChainStart = setup1CacheAddr;
+	
+	return { dataAddr, stackCacheAddr, setup2CacheAddr, setup1CacheAddr };
 }
